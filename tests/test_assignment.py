@@ -82,3 +82,52 @@ def test_coverage_check_detects_and_redelegates_gap():
 
     assert "return_policy" in fixed_assignments
     assert "chargeback_threat" in fixed_assignments
+
+
+def test_dispatch_rejects_over_ceiling_refund_before_tool_runs():
+    coordinator = SupportTicketCoordinator()
+    result = coordinator.dispatch_concern("order_refund", {"amount": 750, "order_id": "A-42"})
+
+    assert result["approved"] is False
+    assert result["reason"] == "Refund exceeds the $500 ceiling"
+
+
+def test_policy_violation_rejects_refund_after_30_days_for_600_item():
+    coordinator = SupportTicketCoordinator()
+    policy_response = policy_analyst_response(
+        "The order was purchased on 2024-01-01 and the customer is requesting a refund for a $600 item on 2024-02-15. The policy allows 30 days only."
+    )
+    refund_result = coordinator.dispatch_concern(
+        "order_refund",
+        {"amount": 600, "order_id": "A-99", "refund_log": []},
+    )
+
+    assert "30 days" in policy_response.lower() or "30-day" in policy_response.lower()
+    assert refund_result["approved"] is False
+    assert refund_result["reason"] == "Refund exceeds the $500 ceiling"
+
+
+def test_extract_concerns_from_customer_ticket_text():
+    coordinator = SupportTicketCoordinator()
+    ticket = (
+        "I need a refund for a $600 item after 30 days. "
+        "I am also threatening a chargeback because I want my money back."
+    )
+
+    concerns = coordinator.extract_concerns(ticket)
+
+    assert "order_refund" in concerns
+    assert "return_policy" in concerns
+    assert "chargeback_threat" in concerns
+
+
+def test_process_ticket_tracks_concerns_and_coverage():
+    coordinator = SupportTicketCoordinator()
+    ticket = "I need a refund for a $600 item and I am threatening a chargeback."
+
+    result = coordinator.process_ticket(ticket)
+
+    assert result["concerns"]
+    assert "order_refund" in result["concerns"]
+    assert "chargeback_threat" in result["concerns"]
+    assert result["coverage_ok"] is True
